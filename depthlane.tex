@@ -1,0 +1,512 @@
+\documentclass[sigconf]{support/acmart}
+
+% DepthLane paper scaffold.
+% The original ACM sample files in this directory are intentionally unchanged.
+% TODO before submission: replace venue metadata, author block, CCS terms, and all
+% red TODO markers; remove forced page breaks after the content stabilizes.
+
+\usepackage{booktabs}
+\usepackage{multirow}
+
+\setcopyright{none}
+\settopmatter{printacmref=false, printfolios=true}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+
+\acmConference[ACT Workshop '26]{ACT Workshop 2026}{2026}{TBD}
+\acmBooktitle{Proceedings of ACT Workshop 2026}
+\acmDOI{}
+\acmISBN{}
+
+\newcommand{\system}{\textsc{DepthLane}}
+\newcommand{\todo}[1]{\textcolor{ACMRed}{[TODO: #1]}}
+\newcommand{\figplaceholder}[2]{%
+  \fbox{\parbox[c][#1][c]{0.96\linewidth}{\centering\small\bfseries #2}}}
+
+\begin{document}
+
+\title{DepthLane: Pipelined GPU--FPGA Split Inference for Real-Time Metric Depth Completion}
+
+% TODO: replace with the venue's required anonymous or non-anonymous author block.
+\author{Anonymous Author(s)}
+\affiliation{%
+  \institution{Anonymous Institution}
+  \city{Anonymous}
+  \country{Anonymous}}
+
+\renewcommand{\shortauthors}{Anonymous Author(s)}
+
+\begin{abstract}
+Metric depth completion converts sparse or noisy range measurements into dense
+metric geometry.  Running it directly on an embedded SoC keeps sensor data
+local, avoids cloud round trips, and provides low-latency geometric information
+for applications such as autonomous driving and mobile robotics.  However,
+existing metric depth completion models are predominantly evaluated on
+discrete GPUs, and few studies demonstrate high-frame-rate execution on
+resource- and power-constrained embedded SoCs.  This leaves a practical gap
+between model-level accuracy and real-time edge deployment.  We present
+\system, a heterogeneous inference system that executes the RGB and RGB-D
+encoders on an NVIDIA Jetson AGX Thor and the decoder on an Intel Stratix 10 MX
+FPGA connected through four high-speed Ethernet lanes. Compared with
+executing the complete model on Thor, \system{} achieves a 1.41$\times$
+end-to-end speedup while maintaining the SOTA metric-depth
+accuracy among other depth completion model. It also reduces total energy per output frame by \todo{XX\%} relative to the
+all-on-Thor baseline.  The prototype further demonstrates that a complete model
+need not reside on one processor: a compute-intensive module can be moved to an
+FPGA behind a well-defined tensor interface, providing a reusable path for
+accelerating compatible modules from other models.  
+\end{abstract}
+
+\keywords{heterogeneous computing, FPGA, edge inference, depth completion,
+post-training quantization, split inference, frame pipelining}
+
+\maketitle
+
+% =============================== PAGE 1 ===============================
+\section{Introduction}
+
+Metric depth estimation is a key building block for spatial understanding,
+robotics, measurement, and scene reconstruction.  Modern encoder--decoder
+networks provide strong accuracy, but their computational and memory demands
+make sustained real-time inference difficult on an embedded processor.  A
+heterogeneous GPU--FPGA platform offers complementary resources: the GPU is
+well suited to the irregular, high-level feature extraction of an encoder,
+whereas the FPGA can implement the regular convolutional dataflow of a decoder.
+
+This work studies AS-Depth as a concrete split-inference case.  The model
+consumes RGB and sparse or noisy depth and produces a dense metric-depth map.
+Its transformer-based encoder executes on an NVIDIA Jetson AGX Thor, while its
+convolutional decoder executes on an Intel Stratix 10 MX FPGA.  The two devices
+exchange intermediate features and depth outputs over four optical Ethernet
+lanes.  The decoder is quantized to INT8 using PTQ so that it fits the FPGA
+compute and memory budget without requiring retraining.
+
+Simply moving the decoder to the FPGA does not guarantee higher throughput.
+For a single frame, encoder execution, feature transfer, FPGA decoding, and
+result return remain on the end-to-end critical path.  Across consecutive
+frames, however, these stages use independent engines.  Once the features of
+frame $i$ leave Thor, the GPU can encode frame $i+1$ while the FPGA decodes
+frame $i$.  \system{} uses double buffering to turn this inter-frame
+independence into a steady-state pipeline that hides much of the FPGA-side
+latency.
+
+This paper makes the following contributions:
+\begin{itemize}
+  \item We implement AS-Depth as a two-device pipeline: Thor executes the
+  encoders, while the FPGA executes an INT8 PTQ decoder.  Overlapping the
+  encoder of frame $i+1$ with the decoder of frame $i$ yields a
+  1.41$\times$ end-to-end speedup over the all-on-Thor baseline while keeping
+  relative metric-depth degradation below 5\%.
+  \item We demonstrate the feasibility of module-level FPGA offload through a
+  buffered tensor interface.  Because the controller depends on the module's
+  inputs, outputs, and completion signal rather than AS-Depth semantics, it can
+  be reused for compatible compute-intensive modules from other models.
+  \item We evaluate power at the complete-system boundary, including Thor, the
+  FPGA board, and the interconnect, and reduce energy per output frame by
+  \todo{XX\%} relative to the all-on-Thor baseline.
+\end{itemize}
+
+\paragraph{Scope.}
+We do not propose a new depth network or target a domain-specific application
+stack.  AS-Depth is the case study used to evaluate a module-level
+heterogeneous pipeline.  Generalization requires a valid model
+partition, sufficient link bandwidth, and an FPGA-compatible offloaded stage;
+Section~\ref{sec:limitations} states these limits.
+
+% The full-width overview is allowed to float to the next available page.
+\begin{figure*}[t]
+  \centering
+  \figplaceholder{1.42in}{%
+    LEFT (about 62\%): system architecture.  RGB+sparse depth enters Thor;
+    the AS-Depth encoder emits an INT8 feature stream over 4$\times$10GbE;
+    Stratix 10 MX executes the decoder and returns uint16 metric depth.  Show
+    ping/pong feature and output buffers.  Overlay frame $i$ on the FPGA path
+    and frame $i+1$ on the GPU encoder to emphasize inter-frame overlap.\par
+    RIGHT (about 38\%): aligned qualitative example with (a) RGB input,
+    (b) sparse/noisy depth input, and (c) predicted dense metric depth.}
+  \caption{\system{} overview.  Consecutive frames occupy different pipeline
+  stages: Thor encodes frame $i+1$ while frame $i$ is transferred and decoded
+  on the FPGA.}
+  \Description{A planned system diagram showing an AS-Depth encoder on Thor,
+  four optical Ethernet lanes, an INT8 decoder on a Stratix 10 MX FPGA, double
+  buffers, and a qualitative metric-depth output.}
+  \label{fig:overview}
+\end{figure*}
+
+\section{Background and Motivation}
+
+\subsection{AS-Depth Split Point}
+
+At the target input size of $518\times686$, the AS-Depth encoder produces a
+$2048\times37\times49$ fused feature map before the convolutional decoder.
+This boundary is attractive because it does not require transferring a full set
+of U-Net skip tensors.  Static analysis of the current decoder gives
+approximately 11.9 million parameters and 135 GMAC per frame (one
+multiply--accumulate counted as one MAC).  The decoder expands the patch-grid
+representation through multiple convolution and upsampling stages before
+producing metric depth.
+
+The split also exposes an important systems constraint.  The boundary tensor is
+approximately 3.54 MiB in INT8.  Serialization alone is about 29.7 ms at
+1 Gb/s, 2.97 ms at 10 Gb/s, and 0.74 ms at an ideal aggregate 40 Gb/s.  Thus,
+the current 1 Gb/s software result is not sufficient for a low-latency system.
+Before the accelerator evaluation, we will distinguish physical link rate from
+host packet-generation limits and report effective payload throughput per lane
+and in aggregate.  This communication-aware framing follows the central lesson
+of earlier split-inference systems \cite{matsubara2019split}, while our focus is
+the pipeline opportunity created by a local GPU--FPGA system.
+
+\subsection{Inter-Frame Pipeline Opportunity}
+
+A serialized split implementation processes $E_i\rightarrow X_i\rightarrow
+F_i\rightarrow R_i$ before starting frame $i+1$, where $E$ is GPU encoding,
+$X$ and $R$ are feature and result transport, and $F$ is FPGA decoding.  This
+schedule leaves one device idle while the other is active.  With independent
+buffers, $E_{i+1}$ can overlap $X_i$, $F_i$, and $R_i$.  The steady-state frame
+interval is therefore governed by the slower pipeline side rather than the sum
+of all stage times, although the latency of an individual frame still includes
+every stage.  Prior FPGA systems similarly use layer- or task-level pipelining
+to improve throughput \cite{razavi2022patterns,symons2022stream}; our focus is
+frame-level overlap across an existing GPU--FPGA model boundary.
+
+\subsection{Reusable Module Offload}
+
+The runtime treats the offloaded decoder as a module with an input tensor
+contract, an output tensor contract, and a completion event.  It does not depend
+on depth-specific scheduling semantics.  The same transport and double-buffer
+structure can therefore support another model partition if the selected module
+can be implemented efficiently on the FPGA and its boundary tensors fit the
+available link and buffer capacity.  AS-Depth provides a demanding case study,
+not a restriction of the system architecture.
+
+\subsection{Design Goals}
+
+\system{} has four goals: (G1) limit relative metric-depth degradation after
+PTQ to at most 5\%; (G2) sustain at least 30 frames/s in steady state; (G3)
+include packing, communication, FPGA decoding, and result return in all
+end-to-end measurements; and (G4) quantify energy and FPGA resource cost for
+the complete pipeline.  We treat a missed target as a measured limitation
+rather than reporting accelerator-kernel time alone.
+
+\section{Heterogeneous System Design}
+\label{sec:design}
+
+\begin{figure*}[t]
+  \centering
+  \figplaceholder{1.05in}{%
+    Execution timeline with rows for Thor encoder, optical TX/RX, FPGA decoder,
+    and completed output.  Serialized split: Enc$_i$, TX$_i$, Dec$_i$, and
+    RX$_i$ finish before Enc$_{i+1}$.  Pipelined split: Enc$_{i+1}$ overlaps
+    TX$_i$+Dec$_i$+RX$_i$, followed by Enc$_{i+2}$ overlapping the offload path
+    of frame $i+1$.  Mark ping/pong buffers, pipeline fill/drain, single-frame
+    latency, and steady-state frame interval.}
+  \caption{Inter-frame pipeline schedule.  Thor encodes the next frame while
+  the current frame traverses the optical link and FPGA decoder.  This overlap
+  targets throughput rather than removing stages from single-frame latency.}
+  \Description{A planned Gantt chart comparing serialized and pipelined
+  execution of consecutive frames across Thor, the optical link, and the FPGA.}
+  \label{fig:timeline}
+\end{figure*}
+
+\subsection{INT8 Post-Training Quantization}
+
+The decoder is quantized without retraining.  We use signed INT8 weights with a
+separate symmetric scale for each output channel, signed INT8 activations with a
+static per-tensor scale, and INT32 accumulation.  A calibration set of
+\todo{128 or 256} training frames determines activation ranges.  We will
+compare simple min--max calibration with \todo{percentile or MSE clipping} and
+select one method before evaluating the held-out validation set.  Integer-only
+inference follows standard affine requantization practice
+\cite{jacob2018quantization}.
+
+Every supported operation will have a bit-exact host reference.  The reference
+fixes rounding, saturation, accumulator width, bias scaling, and requantization
+before RTL validation.  If a fully INT8 decoder violates the predeclared
+5\% relative-accuracy bound, the only fallback evaluated will be an INT16 final
+projection; we will not introduce QAT or a learned compression module in this
+paper.
+
+\subsection{Streaming FPGA Decoder}
+
+The decoder uses DSP-parallel convolution engines, INT32 partial sums, and
+line/tile buffers for activation reuse, following the general streaming
+accelerator approach exemplified by FINN \cite{umuroglu2017finn}.  Weights are loaded before the timed
+run and are excluded only from per-frame latency when the same exclusion is
+applied to GPU baselines.  Consecutive layers are consumed in producer--consumer
+order when buffer capacity permits.  The stride-2, kernel-2 transposed
+convolution can be implemented as an equivalent pointwise projection followed
+by pixel shuffle, avoiding overlap handling in the upsampling datapath.
+
+This paper will report post-fit ALMs, DSPs, M20K bits/blocks, achieved clock,
+and any external-memory traffic.  The existing optical design consumes about
+7\% of ALMs and no DSP blocks, leaving substantial arithmetic capacity, but the
+final compute design must close timing; ``Fitter successful'' is not treated as
+sufficient evidence.
+
+\subsection{Optical Feature Transport}
+
+Thor and the Stratix 10 MX exchange raw Ethernet frames over four 10GbE lanes.
+Jumbo payloads amortize packet overhead.  Each packet carries a frame identifier,
+lane/stripe identifier, byte offset, payload length, and checksum/status field.
+Fixed-size striping distributes consecutive feature blocks across lanes.  The
+FPGA writes arriving blocks into the current ping or pong buffer and exposes a
+frame-ready event after all expected blocks pass validation.  Returned depth is
+encoded as a $518\times686$ uint16 map unless the final preprocessing pipeline
+selects a different padded resolution.
+
+The transport is intentionally loss-intolerant for the evaluation: a missing or
+invalid packet marks the frame incomplete and removes it from useful goodput.
+We report offered traffic, received payload throughput, packet/frame loss, and
+CPU overhead.  Retransmission and safety certification are future work.
+
+\subsection{End-to-End Frame Pipeline}
+
+Two feature buffers and two output buffers permit frame $i+1$ to enter the GPU
+while frame $i$ is decoded.  Timestamps are recorded at input release, encoder
+completion, final packet transmission, FPGA completion, result arrival, and
+application delivery.  This distinguishes steady-state period from individual
+frame latency and prevents an overlap-only throughput gain from being reported
+as a single-frame latency reduction.  After pipeline fill, the approximate
+frame interval is
+\begin{equation}
+  T_{\mathrm{frame}} \approx \max(T_E, T_{\mathrm{offload}}),
+  \label{eq:pipeline-period}
+\end{equation}
+where $T_{\mathrm{offload}}$ includes feature transport, FPGA decoding, and
+result return, including any overlap internal to that path.  Sustaining 30
+frames/s requires $T_{\mathrm{frame}}\leq 33.3$\,ms.
+
+\section{Inter-Frame Pipeline Execution}
+\label{sec:pipeline}
+
+\subsection{Stage and Buffer Model}
+
+Each frame passes through GPU encoding $E_i$, feature transport $X_i$, FPGA
+decoding $F_i$, and result return $R_i$.  Dependencies are enforced only within
+the same frame.  Across frames, $E_{i+1}$ may begin after a free feature buffer
+is available, without waiting for $F_i$ or $R_i$ to complete.  Ping/pong feature
+and output buffers prevent the producer from overwriting data still consumed by
+the link or FPGA.
+
+\subsection{Pipeline Controller}
+
+The host controller maintains buffer ownership and frame identifiers.  It
+submits $E_{i+1}$ while the offload path processes frame $i$, then associates
+each returned depth map with its original input.  Backpressure stops a new
+encoder launch when both feature buffers are occupied.  This bounded policy
+avoids unbounded queues while preserving every frame during the offline
+evaluation.  The controller is dedicated to consecutive frames of the same
+model and makes no multi-model admission decision.
+
+\subsection{Generality Beyond AS-Depth}
+
+The pipeline controller only requires tensor dimensions, serialization rules,
+buffer addresses, and completion events for the selected partition.  A module
+from another model can replace the AS-Depth decoder when (1) its operators map
+efficiently to the FPGA, (2) its weights and working set fit local or HBM
+capacity, and (3) boundary-transfer time does not dominate its saved compute.
+The achievable speedup remains model- and split-dependent, so we present this as
+a reusable system mechanism rather than a universal acceleration claim.
+
+\subsection{Baselines}
+
+We compare four configurations.  \emph{Thor FP32} and \emph{Thor TensorRT
+FP16} execute the complete model on Thor.  \emph{Serialized split} executes the
+Thor encoder and INT8 FPGA decoder without overlap between consecutive frames.
+\emph{Pipelined split} uses identical hardware, quantization, and transport but
+overlaps $E_{i+1}$ with the offload path of frame $i$.  Comparing the last two
+isolates the benefit of inter-frame pipelining from model partitioning and PTQ.
+
+\section{Prototype and Methodology}
+
+Tables~\ref{tab:thor-hardware} and~\ref{tab:fpga-hardware} summarize the two
+hardware platforms.  The FPGA table reports device capacity; post-fit resources
+consumed by our decoder are reported separately in Table~\ref{tab:primary}(b).
+
+\begin{table*}[t]
+  \caption{NVIDIA Jetson AGX Thor hardware configuration.  Peak throughput and
+  port capability are vendor specifications \cite{nvidiathorintro,nvidiathorspec};
+  average power is measured at the platform input while running the evaluated
+  workload.  The prototype operates the QSFP28 link at 4$\times$10\,GbE.}
+  \label{tab:thor-hardware}
+  \centering
+  \small
+  \begin{tabular}{p{0.30\textwidth}p{0.30\textwidth}p{0.32\textwidth}}
+    \toprule
+    CPU & GPU & Peak AI throughput \\
+    \midrule
+    14-core Arm Neoverse V3AE, 2.6\,GHz &
+    2,560-core Blackwell, 10 TPCs &
+    1,035 INT8 TOPS; 2,070 sparse-FP4 TFLOPS \\
+    \midrule
+    Supported precision & Average power & Optical interface \\
+    \midrule
+    FP32/TF32/BF16/FP16/FP8/FP4; INT8; INT4 weights &
+    \todo{measured W} (40--130\,W mode range) &
+    1$\times$QSFP28 (4$\times$25\,GbE); used at 4$\times$10\,GbE \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\begin{table*}[t]
+  \caption{Intel Stratix 10 MX FPGA hardware configuration.  Values are total
+  device capacities rather than post-fit utilization \cite{intels10mxproduct};
+  Intel reports ALMs rather than LUTs.  Average power is measured at the board
+  input, and the two QSFP28 cages are 100GbE-capable while this prototype uses
+  four 10\,GbE lanes \cite{intels10mxboard,intels10mxdsp}.}
+  \label{tab:fpga-hardware}
+  \centering
+  \small
+  \begin{tabular}{p{0.30\textwidth}p{0.30\textwidth}p{0.32\textwidth}}
+    \toprule
+    Device & Logic resources & DSP resources and precision \\
+    \midrule
+    1SM21BHU2F53E2VGS1 (MX 2100) &
+    2,073,000 LEs; 702,720 ALMs; 2,810,880 registers &
+    3,960 DSPs; 2$\times$18$\times$19 or 1$\times$27$\times$27 fixed-point; hardened FP32 \\
+    \midrule
+    Memory resources & Average power & Optical interface \\
+    \midrule
+    6,847 M20Ks (134\,Mb); 11\,Mb MLAB; 94.5\,Mb eSRAM; 8\,GB HBM2 &
+    \todo{measured W} &
+    2$\times$QSFP28 (100GbE capable); used at 4$\times$10\,GbE \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+All input files are decoded before a timed run and replayed from memory.  This
+removes storage variability without requiring a live sensor, while preserving
+real model execution, packet transfer, buffering, and synchronization.  Each
+sample supplies the aligned RGB and sparse/noisy-depth inputs expected by
+AS-Depth.  Accuracy runs process every sample without overlap-dependent drops;
+throughput runs replay the same fixed input sequence for every baseline.
+
+Thor power is sampled from the platform's exposed GPU and system-input rails
+\cite{nvidiathorpower}.  FPGA power is measured at the development-board input
+and cross-checked with the board tool where possible \cite{intels10mx}.  The
+headline energy metric includes both devices and optical transceivers.  We also
+report active-minus-idle energy to explain static board overhead, but do not use
+it as a substitute for total system energy.
+
+\section{Evaluation Plan and Results}
+\label{sec:evaluation}
+
+The evaluation answers three questions.  \textbf{RQ1:} Does INT8 decoder PTQ
+keep metric-depth degradation within 5\%?  \textbf{RQ2:} Does the complete
+Thor--FPGA pipeline sustain at least 30 frames/s, and at what latency, energy,
+and FPGA cost?  \textbf{RQ3:} How much offload-path time is hidden by
+inter-frame overlap relative to a serialized split?
+
+\begin{table*}[t]
+  \caption{Primary accuracy, systems, and FPGA results.  All numerical cells
+  are intentionally blank until reproduced on the final software/bitstream.}
+  \label{tab:primary}
+  \centering
+  \small
+  \textbf{(a) Depth accuracy and end-to-end performance on Hammer}\par\smallskip
+  \resizebox{0.96\textwidth}{!}{%
+  \begin{tabular}{lrrrrrrrr}
+    \toprule
+    Configuration & RMSE (mm)$\downarrow$ & MAE (mm)$\downarrow$ & iRMSE (1/km)$\downarrow$ & iMAE (1/km)$\downarrow$ & p50 (ms)$\downarrow$ & p99 (ms)$\downarrow$ & FPS$\uparrow$ & J/frame$\downarrow$ \\
+    \midrule
+    Thor full model FP32 & -- & -- & -- & -- & -- & -- & -- & -- \\
+    Thor full model TensorRT FP16 & -- & -- & -- & -- & -- & -- & -- & -- \\
+    Serialized Thor encoder + FPGA INT8 decoder & -- & -- & -- & -- & -- & -- & -- & -- \\
+    Pipelined Thor encoder + FPGA INT8 decoder & -- & -- & -- & -- & -- & -- & -- & -- \\
+    \bottomrule
+  \end{tabular}}
+
+  \vspace{0.6em}
+  \textbf{(b) Post-fit FPGA implementation}\par\smallskip
+  \resizebox{0.82\textwidth}{!}{%
+  \begin{tabular}{lrrrrrr}
+    \toprule
+    Design & ALMs & Registers & DSPs & Memory bits / M20Ks & Fmax (MHz) & Decoder latency (ms) \\
+    \midrule
+    Four-lane optical baseline & 47,261 & 54,618 & 0 & 704,064 / 77 & -- & N/A \\
+    Optical + INT8 decoder & -- & -- & -- & -- & -- & -- \\
+    \bottomrule
+  \end{tabular}}
+\end{table*}
+
+\subsection{RQ1: Accuracy Preservation}
+
+We evaluate the complete held-out Hammer set using RMSE, MAE, iRMSE, and iMAE.
+The principal comparison uses the same checkpoint and preprocessing with a
+floating-point decoder and the INT8 PTQ decoder.  For each error metric $m$, we
+report $(m_{\mathrm{INT8}}-m_{\mathrm{float}})/m_{\mathrm{float}}$ and require
+the relative increase to remain at or below 5\%.  This threshold and the
+calibration procedure are fixed before evaluating the held-out set.  One
+qualitative row in Fig.~\ref{fig:overview} will show a representative sample and
+a difficult failure case if space permits.
+
+\subsection{RQ2: Real-Time Throughput and System Cost}
+
+Table~\ref{tab:primary} reports steady-state FPS, end-to-end latency, energy,
+and post-fit resource use.  Real-time operation is supported only if the
+pipelined configuration sustains at least 30 complete outputs/s, corresponding
+to a frame interval no greater than 33.3\,ms.  We separately report encoder,
+feature-transfer, decoder, return, and synchronization times so the source of
+any missed target is visible.  Energy per frame is the integral of complete
+platform power over the run divided by the number of returned depth maps.
+
+\begin{figure}[t]
+  \centering
+  \figplaceholder{1.35in}{%
+    Three aligned plots for Thor FP32, Thor FP16, serialized split, and
+    pipelined split: (a) steady-state FPS with a 30-FPS target line; (b) encoder,
+    transfer, FPGA decoder, return, and exposed-versus-hidden time; (c) average
+    watts and joules per frame.  Use identical input sequences and measured
+    confidence intervals.}
+  \caption{Planned throughput, overlap, and energy comparison.  Serialized and
+  pipelined split execution use the same model, INT8 decoder, hardware, and
+  transport configuration, isolating the benefit of inter-frame overlap.}
+  \Description{A placeholder for throughput, stage-latency, hidden-time, and
+  energy plots comparing full-model Thor execution with serialized and
+  pipelined GPU--FPGA split inference.}
+  \label{fig:pipeline-results}
+\end{figure}
+
+\subsection{RQ3: Pipeline Overlap Effectiveness}
+
+Figure~\ref{fig:pipeline-results} compares serialized and pipelined split
+execution over the same ordered frame sequence.  We report pipeline fill and
+drain separately from steady state, together with the fraction of offload-path
+time hidden behind $E_{i+1}$.  The pipeline claim is supported only if overlap
+improves completed-frame throughput without changing output tensors or dropping
+evaluation frames.  We do not claim that a 30-FPS throughput implies a
+single-frame latency below 33.3\,ms; these are reported as distinct quantities.
+
+\section{Discussion and Limitations}
+\label{sec:limitations}
+
+The prototype evaluates prerecorded inputs rather than live sensor I/O.  The
+observed accuracy preservation is specific to the evaluated checkpoint,
+calibration set, and decoder; PTQ does not guarantee the same bound for another
+model.  Insufficient effective link throughput can dominate the split even when
+the FPGA decoder is fast.  The 30-FPS target concerns steady-state throughput
+after pipeline fill, not the latency of an isolated frame.  Generalization to
+another model is also not automatic: the selected module must have supported
+operators, adequate parallelism, a manageable boundary tensor, and a working
+set that fits the FPGA memory hierarchy.  Activation compression, dynamic
+repartitioning, and fault recovery are outside the present scope.
+
+\section{Conclusion}
+
+\system{} is a GPU--FPGA split-inference system for real-time metric depth
+estimation.  Thor executes the AS-Depth encoder, while a PTQ INT8 decoder runs
+on the FPGA.  Double buffering overlaps encoder execution for the next frame
+with transport and FPGA decoding of the current frame, hiding offload-path time
+in steady state.  Relative to executing the complete model on Thor, this design
+achieves a 1.41$\times$ end-to-end speedup while keeping relative metric-depth
+degradation below 5\%, and reduces energy per output frame by \todo{XX\%}.
+Beyond AS-Depth, the buffered module interface provides a path to offload
+compatible stages from other models, subject to operator, memory, and
+communication constraints.
+
+% Flush the deferred full-width results table before starting the final
+% reference page.  Earlier sections deliberately contain no forced breaks.
+\clearpage
+\bibliographystyle{support/ACM-Reference-Format}
+\bibliography{references/depthlane}
+
+\end{document}
