@@ -1,0 +1,234 @@
+\section{Evaluation}
+\label{sec:evaluation}
+
+We evaluate \system{} by answering four questions.  First, can heterogeneous
+execution sustain the 30-FPS real-time target once communication and runtime
+overheads are included?  Second, does DAQ preserve metric-depth quality on
+challenging sensor data?  Third, how does the complete system compare with
+recent depth-completion methods?  Finally, what FPGA resource, communication,
+power, and energy costs are required to obtain these gains?
+
+\subsection{Methodology}
+
+\paragraph{Baselines.}
+We use two groups of baselines for different purposes.  The controlled system
+comparison runs the same depth-completion network in three deployments:
+\emph{GPU-only} on an RTX~4090, \emph{Thor-only} on the target edge SoC, and
+\system{} with its encoder on Thor and decoder on FPGA.  The GPU-only and
+Thor-only baselines execute the complete model sequentially on one device;
+\system{} includes feature transfer and output reconstruction in its
+end-to-end time.  For the component study, \system{} without DAQ retains the
+same partition, asynchronous runtime, accelerator, and target precisions, but
+replaces the proposed depth-aware policy with conventional low-precision
+quantization.  This makes the comparisons in Table~\ref{tab:methodology}
+attributable to deployment and quantization choices rather than to different
+networks.
+
+For model-level context, we additionally compare against CDM, PriorDA,
+PromptDA, and OMNI-DC, following the methods introduced in
+Section~\ref{sec:introduction}.  We use their released checkpoints and official
+evaluation procedures whenever available.  Because their published FPS values
+come from different GPU platforms, the state-of-the-art throughput plot labels
+the execution platform of every method and does not treat cross-platform FPS
+as a controlled speedup claim.
+
+\paragraph{Benchmarks.}
+We evaluate all accuracy-oriented experiments on HAMMER and ClearPose.  These
+datasets exercise different object geometries and difficult sensing conditions,
+so results are reported for each dataset rather than averaged into one score.
+Every method uses the same test split, validity mask, crop, input resolution,
+and depth range within a dataset.  When a released method requires a different
+input representation, only the documented preprocessing is changed; the
+ground-truth mask and metric computation remain common.  The system and
+ablation experiments use batch size one, which matches continuous RGB-D
+capture on the target robotic platform.
+
+\paragraph{Experiment platform.}
+The prototype comprises an NVIDIA Jetson AGX Thor and an Intel Stratix FPGA
+connected through the system interface described in Section~\ref{sec:framework}.
+The FPGA clock, external-memory configuration, link rate, Thor power mode, and
+software versions are held fixed across the two \system{} variants.  The
+RTX~4090 baseline uses the same model weights, input resolution, preprocessing,
+and output validation.  Before submission, the final platform table will state
+the exact CUDA/TensorRT stack, FPGA device and achieved clock, host--FPGA link,
+and precision assigned to every model stage.
+
+\paragraph{Metrics and measurement protocol.}
+We measure both single-frame latency and steady-state throughput.  Latency is
+decomposed into preprocessing, encoder execution, boundary-tensor transfer,
+FPGA decoding, return transfer, and output reconstruction; FPS is measured only
+after the asynchronous pipeline is filled.  Timing includes synchronization
+needed for a valid completed-depth output, rather than reporting kernel time
+alone.  Each result will state the warm-up length, measured frame count, and
+run-to-run variation.
+
+Depth quality is evaluated with AbsRel, RMSE, MAE, and $\delta_{1.05}$.  Lower
+is better for the three error metrics and higher is better for
+$\delta_{1.05}$.  We report system power, energy per completed frame, and FPS/W
+under a consistent measurement boundary.  FPGA resource results use post-fit
+utilization and achieved frequency rather than pre-synthesis estimates.
+
+\begin{table}[t]
+  \caption{Configurations used for the controlled system comparison and
+  component ablation.  ``Conventional LP'' and ``DAQ'' use the same target
+  bit widths; they differ only in the quantization policy.}
+  \label{tab:methodology}
+  \centering
+  \small
+  \setlength{\tabcolsep}{3.0pt}
+  \renewcommand{\arraystretch}{1.10}
+  \begin{tabular}{lccc}
+    \toprule
+    Configuration & Encoder & Decoder & Precision policy \\
+    \midrule
+    RTX 4090 only & RTX 4090 & RTX 4090 & reference \\
+    Thor only & Thor & Thor & reference \\
+    \system{} w/o DAQ & Thor & FPGA & conventional LP \\
+    \system{} w/ DAQ & Thor & FPGA & depth-aware LP \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Ablation Experiments}
+
+Figure~\ref{fig:ablation-results} evaluates the four configurations in
+Table~\ref{tab:methodology}.  We interpret the bars cumulatively: the
+single-device baselines establish the deployment cost, the system without DAQ
+exposes the benefit of heterogeneous execution, and the complete system shows
+whether depth-aware precision recovers quality without giving up the hardware
+path.
+
+\paragraph{Throughput and heterogeneous execution.}
+Figure~\ref{fig:ablation-results}(a) reports absolute FPS and marks the 30-FPS
+real-time threshold.  Thor-only versus \system{} without DAQ is the primary
+controlled comparison for the Thor--FPGA partition: both process the same
+frames with the same network, while only the latter offloads the decoder and
+overlaps encoder, communication, and decoder work across frames.  We therefore
+report not only their FPS difference, but also the stage-latency breakdown and
+the fraction of transfer hidden by the asynchronous schedule.  \system{} with
+and without DAQ is then compared under the same runtime to determine whether
+the precision policy changes throughput.  GPU-only is retained as a high-end
+performance reference, not as an edge-device energy baseline.  The completed
+discussion will state absolute FPS first, followed by speedup over Thor-only,
+and will explain any remaining gap using the slowest pipeline stage rather
+than attributing it generically to ``offloading.''
+
+\paragraph{Metric-depth accuracy.}
+Figures~\ref{fig:ablation-results}(b)--(e) separate HAMMER and ClearPose and
+show both an error metric and a threshold accuracy metric.  The decisive
+comparison is \system{} without versus with DAQ because their model partition,
+target bit widths, accelerator, and runtime are identical.  Any quality
+difference therefore measures the value of coordinating the quantized encoder
+MLP, boundary representation, and FPGA decoder using metric-depth supervision.
+The GPU-only and Thor-only results provide the unpartitioned reference and
+reveal the total degradation introduced by the heterogeneous low-precision
+path.  We report each dataset independently and discuss whether improvements
+come from reducing large depth errors, increasing the fraction of accurate
+pixels, or both; a single aggregate ``near-SOTA'' statement is not used in
+place of these measurements.
+
+% The component ablation is the only full-width figure in the paper.
+\begin{figure*}[t]
+  \centering
+  \figslot{figures/ablation-results.pdf}{1.62in}{%
+    Results of ablation experiments --- grouped bar charts\\[5pt]
+    AS-Depth w/ DAQ / AS-Depth w/o DAQ / GPU only / Thor only\\
+    (a) FPS $\uparrow$ with 30-FPS line \quad
+    (b) HAMMER AbsRel $\downarrow$ \quad
+    (c) HAMMER $\delta_{1.05}$ $\uparrow$\\
+    (d) ClearPose AbsRel $\downarrow$ \quad
+    (e) ClearPose $\delta_{1.05}$ $\uparrow$}
+  \caption{Results of the component ablation.  Throughput isolates the effect
+  of heterogeneous execution, while the HAMMER and ClearPose panels quantify
+  the accuracy recovered by DAQ under the same partition and target precision.}
+  \Description{Five grouped bar charts comparing FPS, HAMMER absolute
+  relative error and delta accuracy, and ClearPose absolute relative error and
+  delta accuracy for AS-Depth with DAQ, AS-Depth without DAQ, GPU-only, and
+  Thor-only.}
+  \label{fig:ablation-results}
+\end{figure*}
+
+\subsection{Comparison with State-of-the-Art Methods}
+
+\paragraph{Throughput.}
+Figure~\ref{fig:sota-results}(a) compares the reported inference rate of CDM,
+PriorDA, PromptDA, OMNI-DC, and \system{}.  Each bar is annotated with its
+execution platform and the plot includes the 30-FPS reference line.  This
+comparison answers a deployment question--whether current depth-completion
+methods can service a real-time sensor stream--while the controlled
+GPU-only/Thor-only comparison above supports architectural speedup claims.  In
+the completed result discussion, we report \system{}'s measured end-to-end FPS
+and identify whether its advantage comes from the coarse model partition,
+cross-frame overlap, or low-precision execution, using the ablation evidence
+rather than the cross-platform bars alone.
+
+\paragraph{Depth accuracy.}
+Figures~\ref{fig:sota-results}(b) and (c) compare all methods under common
+HAMMER and ClearPose protocols.  The discussion reports the absolute metric
+for every method, \system{}'s gap to the best-performing method, and its rank on
+each dataset.  We then relate that gap to the deployment result: the relevant
+question is whether \system{} reaches real-time edge throughput while keeping
+the accuracy loss small and consistent across both datasets.  Claims of
+state-of-the-art or near-state-of-the-art quality will be made only for metrics
+and datasets for which the measured values support them.
+
+\begin{figure}[t]
+  \centering
+  \figslot{figures/sota-results.pdf}{1.68in}{%
+    Results of comparison with state of the art --- grouped bar charts\\[5pt]
+    (a) FPS $\uparrow$: CDM / PriorDA / PromptDA / OMNI-DC / AS-Depth,\\
+    with platform labels and 30-FPS line\\
+    (b) HAMMER accuracy \qquad (c) ClearPose accuracy}
+  \caption{Comparison with state-of-the-art depth-completion methods.
+  Throughput is labeled by platform and provides deployment context; accuracy
+  is evaluated on HAMMER and ClearPose with a common protocol.}
+  \Description{Three grouped bar charts comparing FPS, HAMMER depth accuracy,
+  and ClearPose depth accuracy across CDM, PriorDA, PromptDA, OMNI-DC, and
+  AS-Depth.}
+  \label{fig:sota-results}
+\end{figure}
+
+\subsection{Overhead Analysis}
+
+\paragraph{FPGA resource and communication overhead.}
+Table~\ref{tab:hardware-overhead} reports post-fit logic, register, DSP, and
+on-chip-memory utilization together with achieved frequency.  To connect
+resource cost to the system design, we also report boundary bytes per frame,
+measured link latency, and standalone decoder latency.  These measurements
+show whether the selected precision fits the target device and whether feature
+transfer is sufficiently small to be hidden behind Thor encoding.  Resource
+percentages are always reported with the device capacity and synthesis tool
+settings so that raw counts are interpretable.
+
+\paragraph{Power and energy efficiency.}
+Power is measured for Thor-only, the active FPGA, and the complete
+Thor--FPGA system using the same input stream and steady-state window used for
+FPS.  We derive energy per frame as system power divided by completed frames
+per second and additionally report FPS/W.  The analysis separates the extra
+power introduced by the FPGA and link from the energy saved by shortening the
+end-to-end execution time.  RTX~4090 power is reported as a separate reference
+because its platform boundary differs from the embedded prototype.  The final
+discussion will pair every energy-efficiency ratio with both its power and
+throughput components, explaining when additional hardware power is offset by
+a shorter end-to-end execution time.
+
+\begin{table}[t]
+  \caption{Post-fit hardware, communication, and energy overhead.  Values
+  marked ``--'' await implementation or measurement.}
+  \label{tab:hardware-overhead}
+  \centering
+  \small
+  \setlength{\tabcolsep}{3.0pt}
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular}{lr@{\qquad}lr}
+    \toprule
+    Metric & Value & Metric & Value \\
+    \midrule
+    Logic / registers & -- & DSP blocks & -- \\
+    On-chip memory & -- & Frequency & -- \\
+    Feature bytes/frame & -- & Link latency & -- \\
+    Decoder latency & -- & System power & -- \\
+    Energy/frame & -- & FPS/W & -- \\
+    \bottomrule
+  \end{tabular}
+\end{table}

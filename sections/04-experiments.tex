@@ -1,0 +1,187 @@
+\section{Experiments}
+\label{sec:experiments}
+
+We evaluate \system{} by answering four questions.  First, can heterogeneous
+execution sustain the 30-FPS real-time target once communication and runtime
+overheads are included?  Second, does DAQ preserve metric-depth quality on
+challenging sensor data?  Third, how does the complete system compare with
+recent depth-completion methods?  Finally, what resource, communication,
+power, and energy costs are required to obtain these gains?
+
+\subsection{Settings}
+\label{sec:settings}
+
+\paragraph{Baselines}
+The controlled system comparison runs the same depth-completion network in
+three deployments: \emph{GPU-only} on an RTX~4090, \emph{Thor-only} on the
+target edge SoC, and \system{}.  The GPU-only and Thor-only baselines execute
+the complete model sequentially on one device; \system{} includes feature
+transfer and output reconstruction in its end-to-end time.  For model-level
+context, we additionally compare against CDM, PriorDA, PromptDA, and OMNI-DC,
+using their released checkpoints and official evaluation procedures whenever
+available.  Because their published FPS values come from different GPU
+platforms, we label the execution platform of every method and do not treat
+cross-platform FPS as a controlled speedup claim.
+
+\paragraph{Benchmarks}
+We evaluate all accuracy-oriented experiments on HAMMER and ClearPose.  These
+datasets exercise different object geometries and difficult sensing conditions,
+so results are reported for each dataset rather than averaged into one score.
+Every method uses the same test split, validity mask, crop, input resolution,
+and depth range within a dataset.  The system and ablation experiments use
+batch size one, which matches continuous RGB-D capture on the target robotic
+platform.
+
+\paragraph{Experiment platform}
+The prototype comprises an NVIDIA Jetson AGX Thor and an Intel Stratix FPGA
+connected through the system interface described in
+Section~\ref{sec:scheduling}.  The FPGA clock, external-memory configuration,
+link rate, Thor power mode, and software versions are held fixed across all
+\system{} variants.  The RTX~4090 baseline uses the same model weights, input
+resolution, preprocessing, and output validation.
+
+\paragraph{Metrics and measurement protocol}
+We measure both single-frame latency and steady-state throughput.  Latency is
+decomposed into preprocessing, encoder execution, boundary-tensor transfer,
+decoding, return transfer, and output reconstruction; FPS is measured only
+after the asynchronous pipeline is filled.  Timing includes synchronization
+needed for a valid completed-depth output, rather than reporting kernel time
+alone.  Depth quality is evaluated with AbsRel, RMSE, MAE, and
+$\delta_{1.05}$.  Lower is better for the three error metrics and higher is
+better for $\delta_{1.05}$.  We report system power, energy per completed
+frame, and FPS/W under a consistent measurement boundary.
+
+\subsection{Main Experiments}
+\label{sec:main-exp}
+
+% Main results (table*): its source stays on page 4 so it lands on top of
+% page 5.
+\begin{table*}[t]
+  \caption{Main results. Values marked ``--'' await measurement.}
+  \label{tab:main-exp}
+  \centering
+  \small
+  \setlength{\tabcolsep}{4pt}
+  \renewcommand{\arraystretch}{1.10}
+  \begin{tabular}{llc|ccc|ccc}
+    \toprule
+    & & & \multicolumn{3}{c|}{HAMMER} & \multicolumn{3}{c}{ClearPose} \\
+    Method & Platform & FPS $\uparrow$
+      & AbsRel $\downarrow$ & RMSE $\downarrow$ & $\delta_{1.05}$ $\uparrow$
+      & AbsRel $\downarrow$ & RMSE $\downarrow$ & $\delta_{1.05}$ $\uparrow$ \\
+    \midrule
+    CDM & -- & -- & -- & -- & -- & -- & -- & -- \\
+    PriorDA & -- & -- & -- & -- & -- & -- & -- & -- \\
+    PromptDA & -- & -- & -- & -- & -- & -- & -- & -- \\
+    OMNI-DC & -- & -- & -- & -- & -- & -- & -- & -- \\
+    \system{} & -- & -- & -- & -- & -- & -- & -- & -- \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\paragraph{Throughput}
+Table~\ref{tab:main-exp} compares the inference rate of CDM, PriorDA,
+PromptDA, OMNI-DC, and \system{}, together with the execution platform of
+each method.  This comparison answers a deployment question---whether current
+depth-completion methods can service a real-time sensor stream---while the
+controlled GPU-only/Thor-only comparison supports architectural speedup
+claims.  We report \system{}'s measured end-to-end FPS and identify whether its
+advantage comes from the coarse model partition, cross-frame overlap, or
+low-precision execution, using the ablation evidence rather than the
+cross-platform numbers alone.
+
+\paragraph{Depth accuracy}
+Table~\ref{tab:main-exp} also compares all methods under common HAMMER and
+ClearPose protocols.  The discussion reports the absolute metric for every
+method, \system{}'s gap to the best-performing method, and its rank on each
+dataset.  The relevant question is whether \system{} reaches real-time edge
+throughput while keeping the accuracy loss small and consistent across both
+datasets.
+
+\subsection{Ablation Studies}
+\label{sec:ablation}
+
+\paragraph{Optical flow versus frequency}
+\draftnote{Ablation on optical flow at different rates, shown in
+Fig.~\ref{fig:of-vs-hz}.}
+
+% OF vs. Hz figure: bottom of the left column on page 5.
+\begin{figure}[b]
+  \centering
+  \resultslot{1.30in}{Optical flow vs.\ Hz}
+  \caption{Ablation on optical flow versus frequency. \pending}
+  \label{fig:of-vs-hz}
+\end{figure}
+
+\paragraph{Scheduling}
+\draftnote{Ablation on scheduling, reported in Table~\ref{tab:abl-scheduling}.}
+
+\paragraph{Heterogeneous execution}
+Thor-only versus \system{} is the primary controlled comparison for the
+heterogeneous partition: both process the same frames with the same network,
+while only the latter offloads the decoder and overlaps encoder,
+communication, and decoder work across frames.  We therefore report not only
+their FPS difference, but also the stage-latency breakdown and the fraction of
+transfer hidden by the asynchronous schedule.  GPU-only is retained as a
+high-end performance reference, not as an edge-device energy baseline.
+
+\paragraph{Metric-depth accuracy}
+The decisive accuracy comparison is \system{} without versus with DAQ because
+their model partition, target bit widths, and runtime are identical.  Any
+quality difference therefore measures the value of coordinating the quantized
+encoder MLP, boundary representation, and decoder using metric-depth
+supervision.  We report each dataset independently and discuss whether
+improvements come from reducing large depth errors, increasing the fraction of
+accurate pixels, or both.
+
+% Temporary: the draft body does not fill the left column of page 5 yet, so
+% end it here; Tables III and IV are then read in the right column. Remove
+% once the ablation text fills the left column.
+\newpage
+
+% Scheduling ablation: right column on page 5, below Table II.
+\begin{table}[t]
+  \caption{Ablation on scheduling. \pending}
+  \label{tab:abl-scheduling}
+  \centering
+  \tabslot{0.80in}{Ablation on scheduling}
+\end{table}
+
+% Fallback table: bottom of the right column on page 5.
+\begin{table}[b]
+  \caption{Fallback optical flow on CUDA. \pending}
+  \label{tab:fallback}
+  \centering
+  \tabslot{0.80in}{Fallback optical flow on CUDA}
+\end{table}
+
+\paragraph{Fallback optical flow on CUDA}
+\draftnote{Optical flow falls back to CUDA; results in Table~\ref{tab:fallback}.}
+
+\paragraph{Power and energy efficiency}
+Power is measured for Thor-only and the complete heterogeneous system using
+the same input stream and steady-state window used for FPS.  We derive energy
+per frame as system power divided by completed frames per second and
+additionally report FPS/W.  The analysis separates the extra power introduced
+by the additional hardware from the energy saved by shortening the end-to-end
+execution time.
+
+% Visualization (figure*): its source stays on page 5 so it lands on top of
+% page 6.
+\begin{figure*}[t]
+  \centering
+  \figslot{figures/visualization.pdf}{2.40in}{%
+    Qualitative visualization with zoom-in regions}
+  \caption{Visualization. \pending}
+  \label{fig:visualization}
+\end{figure*}
+
+% Temporary: the draft body does not fill page 5 yet, so start page 6 here to
+% keep Fig. 6 above Detailed Visualization. Remove once page 5 is full.
+\newpage
+
+\subsection{Detailed Visualization}
+\label{sec:visualization}
+
+\draftnote{Detailed visualization in Fig.~\ref{fig:visualization}, followed by
+a zoom-in explanation.}

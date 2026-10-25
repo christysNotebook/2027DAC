@@ -1,0 +1,66 @@
+\section{Thor--FPGA System Integration}
+\label{sec:system}
+
+\subsection{Prototype and Feature Transport}
+Figure~\ref{fig:prototype} presents the physical platform. The prototype
+combines Jetson AGX Thor and a Stratix 10 MX development
+board~\cite{nvidiathorspec,intels10mxboard,intels10mxproduct}. The current
+decoder endpoint uses one 10GbE lane. Other physical lanes do not imply
+aggregate decoder bandwidth unless they are actually included in the
+evaluated data path.
+
+Thor packs the boundary tensor into raw Ethernet frames. The custom header
+includes a job identifier and chunk identifier, and each data chunk carries
+8,192 payload bytes. The current interface uses 222 chunks for the input
+tensor and 111 chunks for the returned depth map. Weights are uploaded before
+inference and retained for reuse. Cold-start loading and steady-state timing
+will be reported separately.
+
+The receive bridge checks frame metadata, records received chunks, and writes
+payloads into HBM. Once an input is complete, it starts the decoder. After
+decoder completion, the transmit path reads the output tensor and returns its
+chunks to Thor. This coarse model boundary limits the interface to features,
+results, and job control; its cost remains part of the system measurement,
+as required when assessing split inference~\cite{matsubara2019split}.
+
+\subsection{Cross-Frame Execution Schedule}
+\label{sec:overlap}
+Let $E$ denote Thor encoding and $O$ the complete FPGA offload path, including
+packing, transfer, decoding, and result handling. The intended schedule
+overlaps $E_{i+1}$ with $O_i$ (Fig.~\ref{fig:timeline}). A conservative
+implementation needs only one active FPGA job: host-side buffers retain the
+next encoded tensor until the accelerator can accept it. It does not require
+simultaneous execution of two decoder jobs.
+
+\begin{figure}[h]
+  \centering
+  \input{figures/frame-timeline}
+  \caption{Proposed cross-frame overlap. Encoding the next frame proceeds
+  while the previous frame traverses the offload path. Block lengths are
+  schematic, not measured. One active FPGA job is sufficient when the next
+  feature tensor waits in a separate host buffer.}
+  \Description{Serial and overlapped schedules, with encoding and the complete
+  offload service on separate rows.}
+  \label{fig:timeline}
+\end{figure}
+
+With independent service stages and adequate buffering, the ideal period is
+\begin{equation}
+  T_{\mathrm{period}}\approx\max(T_E,T_O),\qquad
+  L_{\mathrm{frame}}\approx T_E+T_O.
+  \label{eq:pipeline}
+\end{equation}
+Queueing and shared-resource contention can increase both quantities. The
+30-FPS target requires an observed period of at most 33.3\,ms; it does not
+require the same bound on single-frame latency. Similar use of concurrent
+processing stages appears in accelerator scheduling
+~\cite{symons2022stream,li2025gaurast}; here the schedule spans two devices.
+
+\subsection{Buffer Ownership and Completion}
+The runtime must associate every returned tensor with its input job and
+retain each buffer until its consumer finishes. Missing chunks, incomplete
+outputs, or timeouts cannot count as completed frames. Host preparation and
+result assembly may contend with encoding, so the final timeline will use
+measured timestamps rather than assume perfect overlap. Cross-frame
+scheduling is specified here as the system design; the completed-frame
+experiment remains pending.

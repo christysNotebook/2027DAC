@@ -1,0 +1,126 @@
+\section{AS-Depth Design}
+\label{sec:design}
+
+\system{} combines three mechanisms derived from the opportunities in
+Section~\ref{sec:motivation}.  A task-level execution framework partitions the
+model and overlaps consecutive frames; DAQ coordinates low precision across
+the Thor encoder and FPGA decoder; and a dedicated decoder accelerator turns
+the regular decoder workload into an efficient hardware dataflow.
+
+\begin{figure}[t]
+  \centering
+  \figslot{figures/as-depth-system.pdf}{1.55in}{%
+    AS-Depth system architecture\\[5pt]
+    Thor: RGB-D preprocessing $\rightarrow$ encoder $\rightarrow$ quantized boundary feature\\
+    Queues / double buffers / Ethernet $\leftrightarrow$ FPGA decoder\\
+    Inset: cross-frame pipeline for frames $i$, $i+1$, and $i+2$}
+  \caption{Overview of \system.  Thor executes the representation encoder and
+  produces the cross-device feature tensor; the FPGA executes the depth
+  decoder.  Queues and double buffers preserve frame order while overlapping
+  encoding, communication, and decoding across consecutive frames.}
+  \Description{A system block diagram of the Thor encoder, quantized feature
+  boundary, communication queues, FPGA decoder, completed-depth output, and a
+  cross-frame pipeline inset.}
+  \label{fig:system-overview}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \figslot{figures/fpga-decoder-accelerator.pdf}{1.70in}{%
+    Dedicated FPGA depth-decoder accelerator\\[5pt]
+    Ethernet/interface engine $\rightarrow$ command scheduler $\rightarrow$ compute engines\\
+    Weight/activation buffers $\leftrightarrow$ external memory\\
+    Label weighted, residual, activation, and upsampling paths}
+  \caption{Architecture of the dedicated FPGA depth-decoder accelerator.  The
+  final figure will show the communication front end, programmable layer
+  controller, weighted and auxiliary compute engines, local reuse buffers, and
+  external-memory datapath.}
+  \Description{A block diagram of the FPGA decoder accelerator and its
+  communication, scheduling, compute, buffering, and memory components.}
+  \label{fig:fpga-accelerator}
+\end{figure}
+
+\subsection{Task-Level Asynchronous Heterogeneous Execution Framework}
+\label{sec:framework}
+
+\paragraph{Model partition and tensor contract.}
+The model is partitioned once at the encoder--decoder boundary.  Thor consumes
+the RGB image and sensor depth, executes the encoder, and exports a quantized
+feature tensor.  The FPGA consumes this tensor and returns the completed
+metric-depth map.  The final paper will state the exact tensor shape, layout,
+precision, scale metadata, and frame identifier used by this interface.
+
+\paragraph{Queued cross-frame execution.}
+The host runtime assigns separate buffers to encoder output, outbound
+transfer, decoder input, and completed depth.  Producer--consumer queues make
+ownership explicit and prevent a buffer from being reused before its consumer
+finishes.  After pipeline fill, the encoder for the next frame can progress in
+parallel with transfer and decoder execution for the current frame.  We report
+both single-frame latency and steady-state throughput because only the latter
+benefits fully from cross-frame overlap.
+
+\paragraph{Communication and back pressure.}
+The runtime batches feature metadata with the boundary tensor and preserves
+frame order on the return path.  If either device becomes the bottleneck,
+bounded queues apply back pressure instead of silently dropping or reordering
+frames.  Section~\ref{sec:evaluation} measures transfer time separately from
+useful computation so that communication hiding can be verified.
+
+\subsection{Depth-Aware Quantization and Customized Precision}
+\label{sec:daq}
+
+DAQ treats quantization as an end-to-end property of the heterogeneous model.
+On Thor, it targets selected MLP computation in the encoder; at the partition
+boundary, it defines the representation transmitted to the FPGA; and inside
+the FPGA, it determines the precision of decoder weights, activations,
+accumulators, and output depth.  Training optimizes the quantized path against
+metric-depth supervision so that numerical error is weighted by its effect on
+the final depth map rather than by feature reconstruction alone, extending the
+standard quantization-aware training setting~\cite{jacob2018quantization}.
+
+\draftnote{Specify the encoder MLP layers covered by DAQ, the exact bit widths,
+per-tensor or per-channel scaling, the depth-aware loss, calibration procedure,
+and any layers retained at higher precision.  The ``without DAQ'' ablation must
+keep the same partition and target precision while replacing DAQ with a
+conventional quantization policy.}
+
+\begin{figure}[t]
+  \centering
+  \figslot{figures/daq-precision.pdf}{1.42in}{%
+    DAQ and precision map\\[5pt]
+    Encoder MLP $\rightarrow$ boundary tensor $\rightarrow$ decoder\\
+    Mark bit width, scale, accumulator, and depth-aware loss}
+  \caption{Depth-aware quantization across the heterogeneous inference path.
+  The final diagram will identify the quantized encoder MLP operations, the
+  cross-device representation, decoder precision, and the depth-domain
+  training signal.}
+  \Description{A precision-flow diagram linking quantized encoder MLP layers,
+  the transferred feature tensor, the FPGA decoder, and a depth-aware loss.}
+  \label{fig:daq}
+\end{figure}
+
+\subsection{Dedicated FPGA Depth Decoder Accelerator}
+\label{sec:accelerator}
+
+The FPGA accelerator specializes the weighted and auxiliary operators in the
+depth decoder while retaining a programmable layer schedule.  Its datapath
+must expose the precision contract established by DAQ, reuse weights and
+activations on chip where profitable, and stream larger intermediate tensors
+through external memory without changing model semantics.  The communication
+front end converts received feature packets into accelerator-visible buffers
+and returns the completed depth map after the final layer.  This design follows
+the broader principle of mapping quantized networks to customized FPGA
+dataflows~\cite{umuroglu2017finn} while specializing the execution path for
+metric-depth decoding.
+
+\paragraph{Compute and dataflow.}
+The architecture description will quantify parallel multiply--accumulate
+lanes, accumulator precision, supported convolution variants, and the mapping
+of activation, residual, and upsampling operators.  A layer controller selects
+the appropriate engine and coordinates local buffers with external memory.
+
+\paragraph{Control and correctness boundary.}
+For every layer, the scheduler records tensor dimensions, addresses,
+quantization parameters, and dependencies.  Verification compares each
+hardware layer boundary and the final depth map against the quantized software
+reference before end-to-end performance is reported.

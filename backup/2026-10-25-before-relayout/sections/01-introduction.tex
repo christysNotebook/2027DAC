@@ -1,0 +1,76 @@
+\section{Introduction}
+\label{sec:introduction}
+
+Metric depth measures the distance of each pixel in an image from the camera, 
+providing geometry cues such as spatial and shape information that the 2D color 
+image cannot provide. 
+Such depth information can be inputted into the backbone model of 
+applications such as autonomous driving and robotics shown in Figure 1, 
+which greatly improves
+the capability of spatial reasoning and enables precision interaction 
+with the objects.
+
+\begin{table}[t]
+  \caption{Depth-completion frame rates on the listed platforms. The
+  30\,FPS entry for AS-Depth is a design target, not a measurement.}
+  \label{tab:intro-framerate}
+  \centering
+  \small
+  \setlength{\tabcolsep}{3pt}
+  \renewcommand{\arraystretch}{1.2}
+  \begin{tabular}{l|ccccc}
+    \hline
+    & CDM & PriorDA & PromptDA & OMNI-DC & Ours \\
+    \hline
+    Platform & RTX 4090 & RTX 4090 & RTX 4090 & RTX 3090 & SoC \\
+    \hline
+    FPS & 6.62 & 6.49 & 5.32 & 4.26 & 30 \\
+    \hline
+    Quality & - & - & - & - & - \\
+    \hline
+  \end{tabular}
+\end{table}
+
+With the widespread availability of commodity depth cameras, acquiring depth information appears to be low cost and straightforward. 
+However, commodity RGB-D cameras frequently suffer from missing values, 
+depth holes, flying pixels, and measurement noise, 
+especially under challenging materials such as transparent, 
+reflective, and specular surfaces. 
+Although recent studies have integrated depth into robotic manipulations, performance remain limited by the poor quality of depth data produced by such device. Therefore, evaluations of robotics is typically restricted to simulators where clean depth is available. 
+Thus, depth completion emerges as an effective method for generating dense metric depth from commodity depth cameras, and has become a critical component for bridging the Sim to Real gap. 
+
+Recent studies 1234 have demonstrated advanced accuracy of depth completion, but their increasingly large Transformer-based architectures impose substantial computation costs. The selected GPU baselines in Table~\ref{tab:intro-framerate} range from 4.26 to 6.62 FPS on RTX 3090/4090 platforms. Because the models and platforms differ, these figures provide context rather than a controlled speedup comparison. Achieving real-time depth completion on an edge SoC such as NVIDIA Jetson AGX Thor remains challenging under its computation budget, motivating algorithm and hardware acceleration.
+
+% To mitigate the contradiction of model heavy computation cost and SoC's computation budget, we propose a novel method: offloading one part of the existing model's computation to another device --- specifically, a FPGA --- to accelerate the whole depth completion pipeline. By leveraging the FPGA's flexible hardware acceleration capabilities, we aim to achieve real-time performance on edge platforms. We begin by profiling the depth completion pipeline and the operator type, and then analyzing the computational workload distribution between the SoC and the FPGA to find the optimal partitioning strategy. We also explore the best customized-precision strategies for the FPGA implementation, and maintain the model accuracy throughout quantization aware training. 
+
+To address this, we propose As-Depth, a asynchronous heterogeneous acceleration system built on SoC and FPGA tailored for depth completion task on edge platforms.
+As-Depth achieves efficient real time rendering speed and SOTA rendering quality on the edge platform. At the architecure level, it decouples the image representation encoding from the metric depth decoding stage, enabling these two tasks to be executed asynchronously on the SoC and FPGA according to their computational characteristics. On the algorithmn-hardware co-design level, our depth aware quantization and customized decoder design effectively preserve the accuracy of metric depth while reducing computational overhead. At the accelerator level, our depth aware accelerator integrates an ethernet interface unit and a depth decoding engine to handle the decoding pipeline, enabling efficient data communication and computation.
+
+Building on these insights above, we develop a novel heterogeneous acceleration system, As-Depth, that combines the strengths of both the SoC and the FPGA to achieve real-time depth completion on edge platforms. It leverages the mature CUDA cores and Tensor Cores of the SoC to accelerate the transformer-based encoder, while offloading the CNN decoder to our customized FPGA implementation. This design ensures the maximum utilization of both the SoC and the FPGA, enableing pipelined execution to hide the latency of the offloaded operations. Through our quantization aware training and depth aware customized precision, our system strike a balance between performance and resource overhead. Our contributions are as follows:  
+
+\begin{itemize}
+  \item We propose a novel heterogenous system and combine task level asynchronous execution for depth completion based on the existing depth completion pipeline, efficiently mapping computing units according to the different computation characteristics of the SoC and FPGA, and using asynchronous optical queued communication to improve inference performance. 
+  \item We design a depth-aware quantization strategy, and a customized precision scheme for the fpga implementation. Our approach successfully balance the accuracy of metric depth between model inference latency.
+  \item We implement a prototype of our As-Depth system on the Nvidia Jetson AGX Thor and Intel Stratrix FPGA platform. Our prototype runs at real-time speed of 30FPS, demonstrating the feasibility of our heterogeneous acceleration approach.
+  \item We implement and evaluate As-Depth on Synopsys. Experiments show that our system achieves 5.4x speedup and xxx improvement in energy efficiency over the latest SOTA implementation on the targeted SoC with the whole depth completion pipeline. To the best of our knowledge, this is the first work that achieves real-time 30FPS inference of depth completion on edge platforms.
+  Our system enables real-time depth near sensor possible which contribute to mitigate the Sim to Real gap in the future rbotics applications. 
+  Moreover, our approach demonstrates the potential for heterogeneous acceleration in resource-constrained environments, paving the way for future advancements in edge AI systems.
+\end{itemize}
+
+
+\begin{figure}[ht]
+  \centering
+  \figslot{figures/workload-characterization.pdf}{1.50in}{%
+    Depth-completion workload characterization\\[5pt]
+    (a) Thor-only stage latency and 33.3-ms budget\\
+    (b) Encoder--decoder operator / compute-memory contrast\\
+    Annotate the partition-boundary tensor size}
+  \caption{Workload characterization of the selected depth-completion model.
+  The final plot will report measured Thor-only stage latency and contrast the
+  computational characteristics of the Transformer encoder and CNN decoder
+  under one controlled inference configuration.}
+  \Description{Two measured panels: a Thor-only latency breakdown relative to
+  a 33.3 millisecond budget and a comparison of encoder and decoder workload
+  characteristics, including the partition-boundary tensor size.}
+  \label{fig:workload}
+\end{figure}

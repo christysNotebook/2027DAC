@@ -1,0 +1,94 @@
+\documentclass[conference]{support/IEEEtran}
+\IEEEoverridecommandlockouts
+
+% IEEE conference version of the ACT Workshop draft (same text and figure
+% placeholders). Body sections live in sections/, references in references/,
+% and the IEEEtran class/bibliography style in support/.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage[table]{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,fit}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\system}{\textsc{AS-Depth}}
+\definecolor{ACMRed}{HTML}{BF0000}
+\newcommand{\todo}[1]{\textcolor{ACMRed}{[TODO: #1]}}
+\definecolor{paperblue}{HTML}{24577A}
+\definecolor{paperlight}{HTML}{EEF3F7}
+\definecolor{papergreen}{HTML}{347264}
+% acmart's accessibility description has no IEEEtran counterpart.
+\providecommand{\Description}[1]{}
+\newcommand{\pending}{\textcolor{paperblue}{\textit{Pending}}}
+\newcommand{\draftnote}[1]{\par\smallskip\noindent
+  {\small\color{paperblue}\textit{Draft note: #1}}\par\smallskip}
+\newcommand{\figslot}[3]{%
+  \IfFileExists{#1}{\includegraphics[width=\linewidth,height=#2,keepaspectratio]{#1}}{%
+  \fcolorbox{paperblue!45}{paperlight}{%
+  \parbox[c][#2][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}{%
+  \centering\color{paperblue}\small #3\par\medskip
+  {\footnotesize Figure reserved for the advisor-review draft}}}}}
+\newcommand{\resultslot}[2]{\fcolorbox{paperblue!45}{paperlight}{%
+  \parbox[c][#1][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}{%
+  \centering\small\color{paperblue}#2\par\medskip
+  \footnotesize Measurements pending; no synthetic results shown.}}}
+
+\begin{document}
+
+\title{AS-Depth: Unleashing OFA Collaboration to Accelerate Metric Depth Completion on SoC}
+
+\author{\IEEEauthorblockN{Anonymous Author(s)}
+\IEEEauthorblockA{Anonymous Institution\\
+Anonymous}}
+
+\maketitle
+
+\begin{abstract}
+Depth completion reconstructs dense metric depth from sparse or noisy measurements captured by low-cost sensors,
+offers great benefits to autonomous driving and robotics.
+However, industrial robotic systems often benefit from real-time metric depth inference,
+which requires the model to be deployed on a resource-constrained platform (e.g., SoC) with limited computing power and energy budget.
+Moreover, existing depth completion models are computationally expensive,
+thus most of the research on depth completion evaluates on data centers GPUs, while the targeted SoC has much smaller computation budget.
+We observe that the backbone of most depht completion models have clear separation between the encoder and decoder stages, which naturally lends itself to heterogeneous acceleration by offloading one stage to a dedicated accelerator.Building on this insight, we propose as-depth, a heterogeneous system dedicated for accelerating depth completion on SoCs via three techniques: (1) a depth aware QAT strategy and accelerator implemented on FPGA to maintain model accuracy under low precision, (2)an asynchronous pipeline to overlap encoding and decoding stages (3)a heterogeneous execution framework that efficiently partitions the computation between the SoC and the FPGA.
+Extensive experiments show that as-depth achieves end to end throughput of 30 fps while maintaining the near SOTA metric-depth accuracy.
+Compared with baselines run on single-GPU, AS-Depth achieves a 5.4$\times$ speedup and xxx times improvement in energy efficiency.
+Our method further demonstrates that a complete model need not reside on one processor:
+a specific module can be offload to another device,
+which provides a reusable path for accelerating compatible modules from other models.
+\end{abstract}
+
+\begin{IEEEkeywords}
+architecture \& system design, depth completion, heterogeneous computing, SoC, real-time inference
+\end{IEEEkeywords}
+
+\begin{figure}[!h]
+  \centering
+  \figslot{figures/depth-completion-teaser.pdf}{1.18in}{%
+    Application teaser and depth-completion pipeline\\[5pt]
+    Raw RGB-D with missing/noisy depth $\rightarrow$ completed metric depth
+    $\rightarrow$ robotic perception\\[3pt]
+    Include a compact Thor--FPGA partition inset}
+  \caption{Depth completion repairs missing and unreliable measurements from
+  commodity RGB-D sensors before metric depth is consumed by downstream
+  robotic perception. The inset previews the encoder--decoder partition used
+  by \system.}
+  \Description{A teaser showing a noisy RGB-D input, a completed metric-depth
+  output, a downstream robotics use case, and a compact overview of the
+  Thor--FPGA execution path.}
+  \label{fig:application-teaser}
+\end{figure}
+\input{sections/01-introduction}
+\input{sections/02-background}
+\input{sections/03-motivation}
+\input{sections/04-design}
+\input{sections/05-evaluation}
+\input{sections/06-conclusion}
+
+\bibliographystyle{support/IEEEtran}
+\bibliography{references/as-depth,references/architecture}
+\end{document}

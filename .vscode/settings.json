@@ -1,0 +1,53 @@
+{
+    // Build with pdfLaTeX into ./tmp, then copy the PDF into ./output.
+    "latex-workshop.latex.outDir": "./tmp",
+    "latex-workshop.latex.recipe.default": "first",
+    "latex-workshop.latex.recipes": [
+        {
+            "name": "PdfLaTeX + copy to output",
+            "tools": ["pdflatexmk", "copy-to-output"]
+        },
+        {
+            "name": "XeLaTeX + copy to output",
+            "tools": ["xelatexmk", "copy-to-output"]
+        }
+    ],
+    "latex-workshop.latex.tools": [
+        {
+            "name": "pdflatexmk",
+            "command": "latexmk",
+            "args": [
+                "-synctex=1",
+                "-pdf",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-outdir=%OUTDIR%",
+                "%DOC%"
+            ],
+            "env": {}
+        },
+        {
+            "name": "xelatexmk",
+            "command": "latexmk",
+            "args": [
+                "-synctex=1",
+                "-pdfxe",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-outdir=%OUTDIR%",
+                "%DOC%"
+            ],
+            "env": {}
+        },
+        {
+            "name": "copy-to-output",
+            "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "args": [
+                "-NoProfile",
+                "-Command",
+                "New-Item -ItemType Directory -Force -Path '%DIR%/output' | Out-Null; Copy-Item -LiteralPath '%OUTDIR%/%DOCFILE%.pdf' -Destination '%DIR%/output/%DOCFILE%.pdf' -Force"
+            ],
+            "env": {}
+        }
+    ]
+}

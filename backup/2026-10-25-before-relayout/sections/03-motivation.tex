@@ -1,0 +1,63 @@
+\section{Motivation}
+\label{sec:motivation}
+
+Based on the workload characterization above, we identify two challenges in
+deploying real-time depth completion on a heterogeneous edge platform.  Each
+challenge exposes an opportunity that directly motivates one part of
+\system's design.
+
+\paragraph{Challenge 1: Monolithic execution misses the real-time budget.}
+
+The Transformer encoder and CNN decoder have different operator mixes and
+hardware preferences, yet a conventional deployment executes both stages
+sequentially on one processor.  The resulting end-to-end latency includes the
+full encoder, decoder, and runtime path for every frame.  Merely moving the
+decoder to another device does not remove this serialization if communication
+and accelerator execution remain on the critical path.
+
+\paragraph{Opportunity 1: Task-level heterogeneous pipelining.}
+This opportunity follows from the clear stage separation.
+The clear encoder--decoder boundary permits a coarse-grained partition: the
+Thor executes the encoder while the FPGA executes the decoder.  Across a
+stream of frames, queued communication and double buffering can overlap the
+encoder of frame $i+1$ with transfer and decoding of frame $i$.  This turns
+device specialization into steady-state pipeline throughput rather than an
+additional synchronous offload cost.
+
+\paragraph{Challenge 2: End-to-end low precision can degrade metric depth.}
+
+Low precision is beneficial on both sides of the partition.  In particular,
+selected MLP computation in the Thor-side encoder and the FPGA-side decoder
+can be executed at reduced precision.  A uniform quantization policy, however,
+must simultaneously accommodate Transformer activation distributions,
+depth-regression sensitivity, and the numerical contract at the cross-device
+boundary.  Aggressive quantization can therefore save computation and
+bandwidth while introducing scale errors or local depth artifacts.
+
+\paragraph{Opportunity 2: Coordinated depth- and hardware-aware precision.}
+This opportunity addresses the tension between efficiency and depth quality.
+Rather than treating encoder quantization, feature transfer, and decoder
+quantization as independent optimizations, \system{} coordinates their
+precision choices.  Depth-aware quantization (DAQ) targets the layers and
+signals that most affect metric-depth accuracy, while hardware-aware precision
+choices map the encoder MLP and decoder datapath to the efficient modes of
+Thor and FPGA, respectively.  The same boundary representation also reduces
+the cost of cross-device feature transfer.
+
+\begin{figure}[t]
+  \centering
+  \figslot{figures/motivation-evidence.pdf}{1.40in}{%
+    Motivation evidence\\[5pt]
+    (a) Sequential versus asynchronous frame schedule\\
+    (b) Accuracy sensitivity of encoder-MLP and decoder quantization\\
+    Use measured latency and depth error only}
+  \caption{Evidence motivating \system. (a) A synchronous offload leaves
+  communication and decoder execution on the critical path, whereas a
+  task-level schedule overlaps work across frames. (b) Low-precision choices
+  in both the encoder MLP and decoder must be coordinated to avoid excessive
+  metric-depth error.}
+  \Description{Two panels comparing sequential and asynchronous execution and
+  showing measured depth-error sensitivity to low precision in the encoder
+  MLP and decoder.}
+  \label{fig:motivation}
+\end{figure}

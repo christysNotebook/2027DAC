@@ -1,0 +1,22 @@
+\begin{tikzpicture}[x=1cm,y=1cm,>=Latex,
+  box/.style={draw=paperblue,fill=paperlight,rounded corners=2pt,
+    align=center,font=\footnotesize,minimum height=.7cm},
+  arr/.style={->,draw=paperblue,thick}]
+  \node[box,text width=6.9cm] (seq) at (0,0) {71-entry graph sequencer\\
+    opcode, parameters, source / destination, completion};
+  \node[box,text width=3.1cm] (weighted) at (-1.9,-1.25) {Weighted engine\\
+    Conv / transposed conv};
+  \node[box,text width=3.1cm] (aux) at (1.9,-1.25) {Auxiliary engines\\
+    ReLU / Add / Bilinear};
+  \node[box,text width=6.9cm] (mem) at (0,-2.5) {Shared memory access path};
+  \node[box,text width=3.1cm] (feat) at (-1.9,-3.65) {Feature buffers\\
+    retain live graph values};
+  \node[box,text width=3.1cm] (scratch) at (1.9,-3.65) {Scratch buffers\\
+    temporary results};
+  \draw[arr] (seq.south)--++(0,-.18)-|(weighted.north);
+  \draw[arr] (seq.south)--++(0,-.18)-|(aux.north);
+  \draw[arr] (weighted.south)--++(0,-.2)-|(mem.north);
+  \draw[arr] (aux.south)--++(0,-.2)-|(mem.north);
+  \draw[arr] (mem.south)--++(0,-.18)-|(feat.north);
+  \draw[arr] (mem.south)--++(0,-.18)-|(scratch.north);
+\end{tikzpicture}

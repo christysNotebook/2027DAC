@@ -1,0 +1,51 @@
+\section{Background and Workload Characterization}
+\label{sec:background}
+
+\subsection{Depth Completion and the Encoder--Decoder Pipeline}
+
+Depth completion estimates a dense metric-depth map from an RGB image and an
+incomplete depth observation.  The input depth may contain holes, outliers, and
+material-dependent noise, whereas the output must retain both absolute scale
+and local geometry for downstream robotic perception.  Modern methods commonly
+pair a representation encoder with a dense prediction decoder.  The encoder
+extracts global visual and geometric features; the decoder fuses and upsamples
+these features to the target depth resolution.
+
+\system{} preserves this algorithmic decomposition and uses its boundary as a
+system partition.  The selected depth-completion network and its trained
+weights are the workload being accelerated, while this paper focuses on the
+low-precision deployment, heterogeneous execution, and dedicated decoder
+hardware.  The final manuscript will state the exact backbone, decoder,
+input/output resolutions, and feature tensor exported at the partition.
+
+\subsection{Computational Characteristics}
+
+The two stages expose different opportunities for edge acceleration.  The
+encoder contains Transformer blocks whose matrix operations and MLP layers can
+use Thor's mature GPU and Tensor Core execution stack.  The decoder is composed
+primarily of structured dense-prediction operators for which customized
+parallelism, buffering, and precision can be implemented on FPGA.  This
+difference motivates a stage-level mapping rather than repeatedly moving
+individual operators between devices.
+
+The argument must be grounded in measurements.  We therefore profile the
+unmodified model on Thor and report the latency of preprocessing, encoder,
+decoder, and postprocessing under a fixed resolution, precision, batch size,
+and power mode.  We additionally characterize the dominant operator classes,
+their arithmetic intensity or compute/memory demand, and the size of the
+encoder--decoder boundary tensor.
+
+\subsection{Edge SoC--FPGA Heterogeneous Execution}
+
+An edge SoC offers a complete software environment and high-throughput tensor
+units, but its compute and energy budget is shared with sensing, planning, and
+control.  An FPGA provides configurable precision, dataflow, and memory
+organization for a stable subgraph.  The combination is useful only when the
+partition is coarse enough to limit communication and when execution across
+devices is scheduled to hide, rather than merely add, transfer latency.
+
+Prior GPU depth-completion systems establish the accuracy of large models, and
+prior FPGA accelerators demonstrate the efficiency of specialized low-precision
+datapaths.  \system{} connects these directions by retaining the encoder on the
+SoC, specializing the decoder on FPGA, and treating the model boundary and
+cross-frame schedule as first-class parts of the design.

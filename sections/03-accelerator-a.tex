@@ -1,0 +1,58 @@
+\section{Proposed FPGA Decoder Accelerator}
+\label{sec:accelerator}
+
+\subsection{Architecture Overview}
+Figure~\ref{fig:accelerator} shows the principal architecture organization.
+The accelerator consists of a graph sequencer, a weighted-layer controller,
+an INT8 systolic array, three auxiliary engines, and a shared memory access
+path. The sequencer issues an operation descriptor and advances after the
+selected engine completes. A complete decoder job therefore uses the same
+hardware across its layers, rather than instantiating one engine per graph
+node. The current cluster activates one operator engine at a time.
+
+Weights, inputs, intermediate features, and outputs are backed by HBM. Local
+M20K memories and registers supply operands to the compute array. This
+distinguishes the implementation from a fully on-chip, layer-unrolled
+streaming network: local computation is pipelined, but intermediate graph
+edges may require HBM reads and writes. The design description and bandwidth
+evaluation retain these transfers explicitly.
+
+\subsection{Shared INT8 Systolic Compute Array}
+The current RTL defines a $104\times32$ array: rows correspond to spatial
+positions and columns to output channels. Each physical processing element
+(PE) consumes two activation--weight pairs along the reduction dimension and
+maintains an INT32 partial sum. A reduction tile contains up to 32 elements;
+successive tiles accumulate into the same output tile. Valid-row,
+valid-column, and valid-reduction counts handle boundary tiles.
+
+For paired operands, the conceptual PE update is
+\begin{equation}
+  p_{r,c}\leftarrow p_{r,c}
+       +a_{r,2k}w_{2k,c}+a_{r,2k+1}w_{2k+1,c}.
+  \label{eq:pe}
+\end{equation}
+The implementation uses the DSP sum-of-two-products mode, with signed
+operands and wider accumulation~\cite{intels10mxdsp}. Its structural maximum
+is $104\times32\times2=6{,}656$ INT8 products/cycle. This count excludes
+loading, pipeline fill, partial tiles, stalls, and result draining; sustained
+throughput must be measured separately.
+
+Valid and completion tokens follow operands through neighboring PEs.
+After computation, results are drained column by column in spatial
+order. The RTL uses local token propagation and a scan-style drain to avoid
+broadcasting an array-wide result address to every accumulator. The timing
+and resource impact of this organization remains part of the implementation
+evaluation.
+
+\subsection{Layer-Weight and Activation Buffering}
+The weighted-layer controller fetches a layer's INT8 weights into a local
+M20K cache and reuses them across spatial tiles. Two register tiles stage
+weights for the array. Two activation-strip buffers support fetching the next
+width-contiguous region while the current region is processed. Boundary
+padding and address generation are performed outside the PE array.
+
+The controller packs results into 64-bit memory words after bias and
+requantization. Burst requests and ready/valid responses must be respected
+throughout the memory path. The evaluation will report effective bandwidth
+and stall cycles at this interface, rather than infer performance from HBM
+capacity or the array's arithmetic peak.

@@ -1,0 +1,26 @@
+\section{Related Works}
+\label{sec:related}
+
+\subsection{Depth Completion}
+\label{sec:related-depth}
+
+Depth completion estimates a dense metric-depth map from an RGB image and an
+incomplete depth observation~\cite{uhrig2017sparsity}.  The input depth may
+contain holes, outliers, and material-dependent noise, whereas the output must
+retain both absolute scale and local geometry for downstream robotic
+perception.  Modern methods commonly pair a representation encoder with a
+dense prediction decoder.  The encoder extracts global visual and geometric
+features; the decoder fuses and upsamples these features to the target depth
+resolution.
+
+\subsection{ViT Compression}
+\label{sec:related-vit}
+
+Prior GPU depth-completion systems establish the accuracy of large models, and
+prior FPGA accelerators demonstrate the efficiency of specialized low-precision
+datapaths.  \system{} connects these directions by retaining the encoder on the
+SoC, specializing the decoder on FPGA, and treating the model boundary and
+cross-frame schedule as first-class parts of the design.
+\draftnote{General ViT compression techniques, e.g.,
+\cite{jacob2018quantization}; contrast with \system{}, whose optimizations are
+application specific to depth completion.}

@@ -1,0 +1,18 @@
+\begin{tikzpicture}[x=1cm,y=1cm,>=Latex,
+  box/.style={draw=paperblue,fill=paperlight,rounded corners=2pt,
+    align=center,font=\small,minimum height=0.85cm},
+  arr/.style={->,thick,draw=paperblue}]
+  \node[box,text width=2.0cm] (in) at (0,0) {RGB + depth\\inputs};
+  \node[box,text width=2.9cm] (thor) at (3.2,0) {Thor\\Transformer encoder};
+  \node[box,text width=2.7cm] (link) at (7.1,0) {Feature transport\\10GbE endpoint};
+  \node[box,text width=3.4cm] (fpga) at (11.4,0) {Stratix 10 MX FPGA\\INT8 CNN decoder};
+  \node[box,text width=1.7cm] (out) at (15.2,0) {Metric-depth\\output};
+  \draw[arr] (in)--(thor);
+  \draw[arr] (thor)--node[above,font=\scriptsize]{INT8}(link);
+  \draw[arr] (link)--(fpga);
+  \draw[arr] (fpga)--(out);
+  \draw[arr] (fpga.south)--++(0,-0.6)-|node[pos=.48,below,font=\scriptsize]
+    {INT16 output returned to Thor over the reverse link}(thor.south);
+  \node[font=\scriptsize,align=center] at (11.4,0.95)
+    {71 scheduled operations / shared compute and HBM};
+\end{tikzpicture}

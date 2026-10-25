@@ -1,0 +1,10 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+This paper presents \system, a heterogeneous depth-completion system that
+decouples representation encoding on Thor from depth decoding on FPGA.  Its
+task-level runtime overlaps consecutive frames, while DAQ coordinates
+low-precision encoder MLP computation, the cross-device representation, and
+the dedicated decoder datapath.  The final manuscript will close by reporting
+the measured throughput, metric-depth accuracy, and energy efficiency achieved
+by this combination on HAMMER and ClearPose.

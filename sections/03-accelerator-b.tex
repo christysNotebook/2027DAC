@@ -1,0 +1,98 @@
+\subsection{Complete-Graph Scheduling and Tensor Lifetimes}
+\label{sec:graph-schedule}
+The sequencer controls all 71 operations independently of the compute array.
+Each entry selects an operator, its source and destination buffers, and the
+relevant parameter set. Convolution and transposed-convolution entries select
+one of 38 weighted-layer descriptors. ReLU, add, and interpolation entries
+instead supply their tensor extents and fixed-point parameters to their
+respective engines.
+
+Figure~\ref{fig:graph-execution} illustrates this organization. Logical
+feature buffers preserve tensors needed by later residual or fusion
+operations; scratch buffers hold transient outputs. Their lifetimes follow
+the graph rather than a simple alternation after every operation. A buffer
+may be reused only after its last consumer completes. Engine completion must
+also cover output-memory acceptance before the next dependent operation is
+issued.
+
+\begin{figure}[h]
+  \centering
+  \input{figures/graph-execution}
+  \caption{Execution organization of the 71-operation decoder. The sequencer
+  selects one weighted or auxiliary engine for each graph step. Persistent
+  feature buffers retain values for later consumers, while scratch buffers
+  hold temporary results. This is a logical execution diagram, not a claim
+  that all graph edges remain on chip.}
+  \Description{A sequencer dispatching to weighted and auxiliary engines with
+  a shared memory interface to persistent and scratch buffers.}
+  \label{fig:graph-execution}
+\end{figure}
+
+\subsection{Convolution, Upsampling, and Auxiliary Operators}
+The weighted engine supports the decoder's $1\times1$ and $3\times3$
+convolutions together with kernel-2, stride-2 transposed convolution. Layer
+descriptors select the shape and address-generation behavior while reusing
+the physical array. The final manuscript will pair the transposed-convolution
+address mapping with a small worked tile example from the implementation.
+
+The auxiliary engines implement ReLU, residual addition, and bilinear
+interpolation. They share the memory access path with the weighted engine.
+Each addition converts its two operands to the
+destination scale; interpolation similarly requires a specified coordinate
+and rounding convention. These operators are included in decoder timing,
+even though they do not use the systolic array.
+
+\subsection{INT8 Datapath and Output Representation}
+\label{sec:quantization}
+Decoder quantization is an enabling implementation step. The encoder retains
+its separately specified execution precision. The hardware consumes signed
+INT8 operands, retains INT32 partial sums, and uses integer bias and scaling
+parameters for output conversion. This follows the general integer-inference
+principle of separating narrow operands from wider accumulation
+~\cite{jacob2018quantization}.
+
+For a layer output, the numerical contract can be written as
+\begin{equation}
+  q_y=\operatorname{sat}_{b}\!\left(
+      \operatorname{round}\!\left(M(p+b_q)\right)\right),
+  \label{eq:requant}
+\end{equation}
+where $p$ is the integer dot product, $b_q$ is the integer bias, and $M$
+represents the exported fixed-point scaling operation. The exact multiplier,
+shift, rounding, and clipping rules must match the reference implementation.
+Equation~\ref{eq:requant} expresses the contract and does not replace its
+bit-level definition. Intermediate outputs use INT8; the final accelerator
+output is signed INT16.
+
+\begin{table}[h]
+  \caption{Numerical and memory contracts to be fixed for the final
+  evaluation. Pending entries require the corresponding export or test record.}
+  \label{tab:contracts}
+  \centering\small
+  \begin{tabular}{p{0.43\columnwidth}p{0.48\columnwidth}}
+    \toprule
+    Item & Current contract / required detail\\
+    \midrule
+    Array operands & Signed INT8\\
+    Partial sums & INT32\\
+    Intermediate / final output & INT8 / signed INT16\\
+    Bias and output scaling & Exported integer parameters\\
+    Calibration procedure & \pending\\
+    Rounding / saturation tests & \pending\\
+    Depth unit and output scale & \pending\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Implementation and Verification Boundary}
+The accelerator combines RTL control and weighted computation with HLS-based
+auxiliary engines. Verification proceeds from the integer software reference
+to operator-level RTL checks, complete-graph simulation, and board-level
+execution. Matching a software model or generating a bitstream alone does not
+establish complete hardware correctness. The final resource table will use
+the evaluated bitstream's post-fit report and identify the clock domains for
+which timing is met.
+
+\draftnote{Add the author's detailed PE/buffer inset to the main architecture
+figure if available. Quantization settings and measured resource counts are
+intentionally not inferred from incomplete integration tests.}

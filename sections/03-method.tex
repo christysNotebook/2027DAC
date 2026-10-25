@@ -1,0 +1,153 @@
+\section{Method}
+\label{sec:method}
+
+\system{} combines three mechanisms derived from the observations below.  A
+task-level execution framework partitions the model and overlaps consecutive
+frames; DAQ coordinates low precision across the Thor encoder and FPGA decoder;
+and a dedicated decoder accelerator turns the regular decoder workload into an
+efficient hardware dataflow.
+
+\subsection{Preliminary}
+\label{sec:preliminary}
+
+% Observation figure: top of the left column on page 3.
+\begin{figure}[t]
+  \centering
+  \figslot{figures/observation.pdf}{1.30in}{%
+    Observation figure}
+  \caption{Observation. \pending}
+  \label{fig:obs}
+\end{figure}
+
+\system{} preserves the encoder--decoder decomposition of depth completion and
+uses its boundary as a system partition.  The selected depth-completion network
+and its trained weights are the workload being accelerated, while this paper
+focuses on the low-precision deployment, heterogeneous execution, and dedicated
+decoder hardware.
+
+\paragraph{Computational characteristics}
+The two stages expose different opportunities for edge acceleration.  The
+encoder contains Transformer blocks whose matrix operations and MLP layers can
+use Thor's mature GPU and Tensor Core execution stack.  The decoder is composed
+primarily of structured dense-prediction operators for which customized
+parallelism, buffering, and precision can be implemented on FPGA.  This
+difference motivates a stage-level mapping rather than repeatedly moving
+individual operators between devices.  We profile the unmodified model on Thor
+and report the latency of preprocessing, encoder, decoder, and postprocessing
+under a fixed resolution, precision, batch size, and power mode
+(Fig.~\ref{fig:obs} and Table~\ref{tab:obs}).
+
+\paragraph{Edge SoC--FPGA heterogeneous execution}
+An edge SoC offers a complete software environment and high-throughput tensor
+units, but its compute and energy budget is shared with sensing, planning, and
+control.  An FPGA provides configurable precision, dataflow, and memory
+organization for a stable subgraph.  The combination is useful only when the
+partition is coarse enough to limit communication and when execution across
+devices is scheduled to hide, rather than merely add, transfer latency.
+
+\paragraph{Observation 1: Monolithic execution misses the real-time budget}
+The Transformer encoder and CNN decoder have different operator mixes and
+hardware preferences, yet a conventional deployment executes both stages
+sequentially on one processor.  The resulting end-to-end latency includes the
+full encoder, decoder, and runtime path for every frame.  Merely moving the
+decoder to another device does not remove this serialization if communication
+and accelerator execution remain on the critical path.  The clear
+encoder--decoder boundary instead permits a coarse-grained partition: the Thor
+executes the encoder while the FPGA executes the decoder.  Across a stream of
+frames, queued communication and double buffering can overlap the encoder of
+frame $i+1$ with transfer and decoding of frame $i$.
+
+% Observation table: top of the right column on page 3.
+\begin{table}[t]
+  \caption{Observation table. \pending}
+  \label{tab:obs}
+  \centering
+  \tabslot{0.80in}{Observation table}
+\end{table}
+
+\paragraph{Observation 2: End-to-end low precision can degrade metric depth}
+Low precision is beneficial on both sides of the partition.  In particular,
+selected MLP computation in the Thor-side encoder and the FPGA-side decoder
+can be executed at reduced precision.  A uniform quantization policy, however,
+must simultaneously accommodate Transformer activation distributions,
+depth-regression sensitivity, and the numerical contract at the cross-device
+boundary.  Aggressive quantization can therefore save computation and
+bandwidth while introducing scale errors or local depth artifacts.  Rather than
+treating encoder quantization, feature transfer, and decoder quantization as
+independent optimizations, \system{} coordinates their precision choices.
+
+\subsection{Our Design: Optical Flow}
+\label{sec:optical-flow}
+
+\draftnote{Optical-flow design, illustrated in Fig.~\ref{fig:optical-flow}.}
+
+% Optical-flow figure: bottom of the right column on page 3.
+\begin{figure}[b]
+  \centering
+  \figslot{figures/optical-flow.pdf}{1.30in}{%
+    Optical-flow design}
+  \caption{Optical-flow design. \pending}
+  \label{fig:optical-flow}
+\end{figure}
+
+\paragraph{Depth-aware quantization}
+DAQ treats quantization as an end-to-end property of the heterogeneous model.
+On Thor, it targets selected MLP computation in the encoder; at the partition
+boundary, it defines the representation transmitted to the FPGA; and inside
+the FPGA, it determines the precision of decoder weights, activations,
+accumulators, and output depth.  Training optimizes the quantized path against
+metric-depth supervision so that numerical error is weighted by its effect on
+the final depth map rather than by feature reconstruction alone, extending the
+standard quantization-aware training setting~\cite{jacob2018quantization}.
+
+\paragraph{Dedicated depth decoder accelerator}
+The FPGA accelerator specializes the weighted and auxiliary operators in the
+depth decoder while retaining a programmable layer schedule.  Its datapath
+must expose the precision contract established by DAQ, reuse weights and
+activations on chip where profitable, and stream larger intermediate tensors
+through external memory without changing model semantics.  The communication
+front end converts received feature packets into accelerator-visible buffers
+and returns the completed depth map after the final layer.  This design follows
+the broader principle of mapping quantized networks to customized FPGA
+dataflows~\cite{umuroglu2017finn} while specializing the execution path for
+metric-depth decoding.  For every layer, the scheduler records tensor
+dimensions, addresses, quantization parameters, and dependencies, and
+verification compares each hardware layer boundary against the quantized
+software reference.
+
+\subsection{Scheduling in Heterogeneous System}
+\label{sec:scheduling}
+
+\paragraph{Model partition and tensor contract}
+The model is partitioned once at the encoder--decoder boundary.  Thor consumes
+the RGB image and sensor depth, executes the encoder, and exports a quantized
+feature tensor.  The FPGA consumes this tensor and returns the completed
+metric-depth map.
+
+\paragraph{Queued cross-frame execution}
+The host runtime assigns separate buffers to encoder output, outbound
+transfer, decoder input, and completed depth.  Producer--consumer queues make
+ownership explicit and prevent a buffer from being reused before its consumer
+finishes.  After pipeline fill, the encoder for the next frame can progress in
+parallel with transfer and decoder execution for the current frame, as
+summarized in Algorithm~\ref{alg:scheduling}.
+
+% Scheduling pseudocode: bottom of the left column on page 4.
+\begin{algorithm}[b]
+  \caption{Heterogeneous scheduling (placeholder)}
+  \label{alg:scheduling}
+  \begin{algorithmic}[1]
+    \Require Input frame stream \pending
+    \Ensure Completed metric-depth stream \pending
+    \For{each incoming frame}
+      \State \pending
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+\paragraph{Communication and back pressure}
+The runtime batches feature metadata with the boundary tensor and preserves
+frame order on the return path.  If either device becomes the bottleneck,
+bounded queues apply back pressure instead of silently dropping or reordering
+frames.  Section~\ref{sec:experiments} measures transfer time separately from
+useful computation so that communication hiding can be verified.
