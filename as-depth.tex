@@ -46,7 +46,7 @@
 
 \begin{document}
 
-\title{AS-Depth: Unleashing OFA Collaboration For Efficient Metric Depth Completion on SoC}
+\title{AS-Depth: Unleashing OFA Collaboration For Efficient Metric Depth Completion on SoCs}
 
 \author{\IEEEauthorblockN{Anonymous Author(s)}
 \IEEEauthorblockA{Anonymous Institution\\
@@ -78,12 +78,11 @@ Building on this insight, we present \system{}, an asynchronous framework to acc
 (1)~an asynchronous execution path that decouples depth output from model
 inference;
 (2)~a heterogeneous collaboration that offloads inter-frame depth propagation
-to the SoC's on-chip Optical Flow Accelerator (OFA), alongside the GPU running
-the model; and
+to the SoC's on-chip Optical Flow Accelerator (OFA) and
 (3)~an adaptive frame-adjustment strategy that tunes the inference rate at
 runtime.
 On NVIDIA Jetson AGX Thor, \system{} delivers over
-6$\times$ speedup and 50\% energy savings over CDM with negligible accuracy drop. 
+6$\times$ speedup and 50\% energy savings with negligible accuracy drop. 
 Moreover, \system{} can integrate into existing depth-completion
 models.
 \end{abstract}
