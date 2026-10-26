@@ -46,7 +46,7 @@
 
 \begin{document}
 
-\title{AS-Depth: Unleashing OFA Collaboration to Accelerate Metric Depth Completion on SoC}
+\title{AS-Depth: Unleashing OFA Collaboration For Efficient Metric Depth Completion on SoC}
 
 \author{\IEEEauthorblockN{Anonymous Author(s)}
 \IEEEauthorblockA{Anonymous Institution\\
@@ -54,23 +54,42 @@ Anonymous}}
 
 \maketitle
 
+% Original draft (kept for reference):
+% Recent breakthrough in Depth completion models enables the reconstruction of dense metric depth from sparse or noisy measurements captured by low-cost sensors,
+% offering great benefits to autonomous driving and robotics.
+% Existing methods achieve promising accuracy with large Transformer-based architectures, which can make them diffcult to deploy for real-time near-sensor perception due to theTransformer-heavy computation and large parameter counts.
+% However, industrial robotic systems often require (1)real-time inference (2)deployment on resource-constrained platforms (e.g., SoC).
+% To address these limitations, we analyse the scheduling model of current depth completion pipeline and observe large temporal redundancies of continuous depth maps under high framerates.
+% Building on this insight, we propose as-depth, an asynchronous framework dedicated for accelerating depth completion on SoCs via three techniques: (1) an asynchronous path which decouples the frame display and model computation stages (2) a heteregeous hardware collaboration featured in Optical Flow Accelerator on SoC (3) an adaptive frame adjusment strategy.
+% Extensive experiments on depth completion tasks demonstrate over 6 $\times$ speedup and 50\% energy savings. We further show that as-depth can be integrated into otherexisting depth completion frameworks.
 \begin{abstract}
-Depth completion reconstructs dense metric depth from sparse or noisy measurements captured by low-cost sensors,
-offers great benefits to autonomous driving and robotics.
-However, industrial robotic systems often benefit from real-time metric depth inference,
-which requires the model to be deployed on a resource-constrained platform (e.g., SoC) with limited computing power and energy budget.
-Moreover, existing depth completion models are computationally expensive,
-thus most of the research on depth completion evaluates on data centers GPUs, while the targeted SoC has much smaller computation budget.
-We observe that the backbone of most depht completion models have clear separation between the encoder and decoder stages, which naturally lends itself to heterogeneous acceleration by offloading one stage to a dedicated accelerator.Building on this insight, we propose as-depth, a heterogeneous system dedicated for accelerating depth completion on SoCs via three techniques: (1) a depth aware QAT strategy and accelerator implemented on FPGA to maintain model accuracy under low precision, (2)an asynchronous pipeline to overlap encoding and decoding stages (3)a heterogeneous execution framework that efficiently partitions the computation between the SoC and the FPGA.
-Extensive experiments show that as-depth achieves end to end throughput of 30 fps while maintaining the near SOTA metric-depth accuracy.
-Compared with baselines run on single-GPU, AS-Depth achieves a 5.4$\times$ speedup and xxx times improvement in energy efficiency.
-Our method further demonstrates that a complete model need not reside on one processor:
-a specific module can be offload to another device,
-which provides a reusable path for accelerating compatible modules from other models.
+Depth completion recovers dense metric depth from the sparse and noisy
+measurements of low-cost RGB-D sensors, and has become a key enabler for
+robotic manipulation and autonomous driving.
+Recent Transformer-based models have achieved promising accuracy on metric depth prediction, 
+but their heavy computation and large parameter counts confine them to
+run real-time framerate on edge platforms.
+While modern robotic systems demand real-time depth on resource-constrained
+edge SoCs.
+To address this limitation, we observe that this gap lies in the model itself and how the
+pipeline is scheduled: every frame is pushed through the full network, even
+though consecutive depth maps at high frame rates are highly redundant.
+Building on this insight, we present \system{}, an asynchronous framework to accelerate depth completion on SoCs through three techniques:
+(1)~an asynchronous execution path that decouples depth output from model
+inference;
+(2)~a heterogeneous collaboration that offloads inter-frame depth propagation
+to the SoC's on-chip Optical Flow Accelerator (OFA), alongside the GPU running
+the model; and
+(3)~an adaptive frame-adjustment strategy that tunes the inference rate at
+runtime.
+On NVIDIA Jetson AGX Thor, \system{} delivers over
+6$\times$ speedup and 50\% energy savings over CDM with negligible accuracy drop. 
+Moreover, \system{} can integrate into existing depth-completion
+models.
 \end{abstract}
 
 \begin{IEEEkeywords}
-architecture \& system design, depth completion, heterogeneous computing, SoC, real-time inference
+Computer systems organization → Sensors and actuators; Computing methodologies → Perception; Vision for robotics.
 \end{IEEEkeywords}
 
 \input{sections/01-introduction}
